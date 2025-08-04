@@ -14,9 +14,6 @@ const checkRole = (...rolesAllowed) => {
       if (error) throw error;
 
       const rolesNames = userRoles.map(ur => ur.roles.name);
-
-      console.log('Roles del usuario:', rolesNames);
-
       const hasAccess = rolesAllowed.some(role => rolesNames.includes(role));
 
       if (!hasAccess) {

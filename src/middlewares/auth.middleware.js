@@ -3,7 +3,7 @@ const db = require('../config/db.config');
 
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-
+  
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ message: 'Token requerido' });
   }
@@ -21,10 +21,6 @@ const verifyToken = async (req, res, next) => {
       .eq('token', token)
       // .gt('expires_at', new Date())
       .maybeSingle(); // ✅
-
-    console.log(`Verificando token: "${token}"`);
-    console.log('token record:', tokenRecord);
-    console.log(`Token verificado: ${tokenRecord ? 'sí' : 'no'}`);
 
     if (!tokenRecord) {
       return res.status(403).json({ message: 'Token inválido o expirado (revocado)' });
