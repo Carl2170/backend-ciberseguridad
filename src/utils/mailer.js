@@ -5,13 +5,14 @@ const transporter = nodemailer.createTransport({
   service: 'gmail', // O usa otro: 'hotmail', 'mailgun', 'outlook', etc.
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    pass: process.env.EMAIL_KEY,
   },
 });
 
 const sendPasswordResetEmail = async (to, token) => {
     const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
-
+    console.log(process.env.EMAIL_USER, process.env.EMAIL_KEY, resetLink);
+    
   await transporter.sendMail({
     from: `"SecureZone App" <${process.env.EMAIL_USER}>`,
     to,

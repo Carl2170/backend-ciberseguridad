@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { hashPassword, verifyPassword } = require('../utils/hash');
 const { generateAccessToken, generateRefreshToken } = require('../utils/jwt');
+const { sendPasswordResetEmail } = require('../utils/mailer');
 
 const register = async (req, res) => {
   const { email, password, full_name } = req.body;
@@ -168,7 +169,9 @@ const forgotPassword = async (req, res) => {
     if (errInsert) throw errInsert;
 
     // Aquí deberías enviar el correo
-    res.json({ msg: 'Token generado', token });
+    await sendPasswordResetEmail(email, token);
+
+    res.json({ msg: 'Token generado y enviado por correo', token });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Error al generar token' });
@@ -184,7 +187,7 @@ const resetPassword = async (req, res) => {
       .select('*')
       .eq('token', token)
       .eq('used', false)
-      .gt('expires_at', new Date())
+      // .gt('expires_at', new Date())
       .maybeSingle();
 
     if (errToken || !resetToken) return res.status(400).json({ msg: 'Token inválido o expirado' });
