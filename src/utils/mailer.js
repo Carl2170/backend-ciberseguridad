@@ -26,4 +26,23 @@ const sendPasswordResetEmail = async (to, token) => {
   });
 };
 
-module.exports = { sendPasswordResetEmail };
+const sendOtpEmail = async (to, otpCode) => {
+  try {
+    await transporter.sendMail({
+      from: `"SecureZone App" <${process.env.EMAIL_USER}>`,
+      to,
+      subject: 'Tu código de verificación',
+      html: `
+        <h2>Verificación de inicio de sesión</h2>
+        <p>Tu código de verificación de un solo uso (OTP) es:</p>
+        <p style="font-size: 24px; font-weight: bold; color: #007bff;">${otpCode}</p>
+        <p>Este código es válido por 5 minutos.</p>
+      `,
+    });
+    console.log(`OTP enviado a ${to} exitosamente.`);
+  } catch (error) {
+    console.error('Error al enviar el correo OTP:', error);
+  }
+};
+
+module.exports = { sendPasswordResetEmail, sendOtpEmail };

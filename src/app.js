@@ -2,10 +2,19 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 require('dotenv').config();
+const sqlInjectionDetector = require('./middlewares/sq-injection-detector');
+const detectPathTraversal = require('./middlewares/pathTraversalDetector');
+const detectXss = require('./middlewares/xssDetector');
+const limitRate = require('./middlewares/rateLimiter'); 
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
+
+app.use(limitRate); 
+app.use(sqlInjectionDetector);
+app.use(detectPathTraversal);
+app.use(detectXss);
 
 // Importa rutas
 const authRoutes = require('./routes/auth.routes');

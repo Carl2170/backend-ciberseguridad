@@ -3,7 +3,30 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { hashPassword, verifyPassword } = require('../utils/hash');
 const { generateAccessToken, generateRefreshToken } = require('../utils/jwt');
-const { sendPasswordResetEmail } = require('../utils/mailer');
+const { sendPasswordResetEmail, sendOtpEmail } = require('../utils/mailer'); 
+const { saveOtp, verifyOtp } = require('../services/otpService');
+
+// Función de validación de contraseña 
+const validatePassword = (password) => {
+  const minLength = 8;
+  const regex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).+$/;
+
+  const commonPasswords = ['12345678', 'password', 'qwerty123', 'abc123', '123456'];
+
+  if (commonPasswords.includes(password)) {
+    return 'La contraseña es demasiado común. Elige otra más segura.';
+  }
+
+  if (password.length < minLength) {
+    return 'La contraseña debe tener al menos 8 caracteres.';
+  }
+
+  if (!regex.test(password)) {
+    return 'La contraseña debe incluir mayúsculas, minúsculas, números y símbolos.';
+  }
+
+  return null;
+};
 
 const register = async (req, res) => {
   const { email, password, full_name } = req.body;
@@ -17,6 +40,11 @@ const register = async (req, res) => {
 
     if (errExisting) throw errExisting;
     if (existingUser) return res.status(400).json({ message: 'Email ya registrado' });
+
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      return res.status(400).json({ message: passwordError });
+    }
 
     const password_hash = await hashPassword(password);
 
@@ -35,7 +63,10 @@ const register = async (req, res) => {
   }
 };
 
-const login = async (req, res) => {
+/**
+ * Primera parte del login: Verifica credenciales y envía un código OTP.
+ */
+const loginWithOtp = async (req, res) => {
   const { email, password } = req.body;
 
   try {
@@ -50,6 +81,41 @@ const login = async (req, res) => {
     const valid = await verifyPassword(password, user.password_hash);
     if (!valid) return res.status(401).json({ message: 'Credenciales inválidas' });
 
+    // Guardamos un nuevo OTP en la base de datos
+    const otpCode = await saveOtp(user.id);
+
+    // Llamamos a la nueva función para enviar el OTP por correo
+    if (otpCode) {
+      await sendOtpEmail(user.email, otpCode);
+    }
+
+    res.json({ message: 'Código OTP enviado. Por favor, verifica tu correo.' });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Error al iniciar sesión' });
+  }
+};
+
+/**
+ * Segunda parte del login: Verifica el OTP y genera tokens.
+ */
+const verifyOtpAndLogin = async (req, res) => {
+  const { email, otpCode } = req.body;
+
+  try {
+    const { data: user, error: errUser } = await db
+      .from('users')
+      .select('id, email, full_name')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (errUser || !user) return res.status(401).json({ message: 'Email no encontrado' });
+
+    const isOtpValid = await verifyOtp(user.id, otpCode);
+    if (!isOtpValid) return res.status(401).json({ message: 'Código OTP inválido o expirado' });
+
+    // Si el OTP es válido, procedemos a generar los tokens de autenticación
     const accessToken = generateAccessToken(user);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // ejemplo: 15 minutos
 
@@ -75,11 +141,13 @@ const login = async (req, res) => {
     if (errToken) throw errToken;
 
     res.json({ accessToken, refreshToken });
+
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Error al iniciar sesión' });
+    res.status(500).json({ message: 'Error al verificar el OTP' });
   }
 };
+
 
 const refreshAccessToken = async (req, res) => {
   const { refreshToken } = req.body;
@@ -215,9 +283,11 @@ const resetPassword = async (req, res) => {
   }
 };
 
+
 module.exports = {
   register,
-  login,
+  loginWithOtp,
+  verifyOtpAndLogin,
   refreshAccessToken,
   logout,
   forgotPassword,
