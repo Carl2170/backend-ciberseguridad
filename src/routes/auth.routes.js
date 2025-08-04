@@ -8,11 +8,12 @@ const {
     forgotPassword, 
     resetPassword 
 } = require('../controllers/auth.controller');
+const verifyToken = require('../middlewares/auth.middleware');
 
 router.post('/register', register);
 router.post('/login', login);
 router.post('/refresh', refreshAccessToken);
-router.post('/logout', logout);
+router.post('/logout', verifyToken, logout);
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password', resetPassword);
 

@@ -1,16 +1,41 @@
 const jwt = require('jsonwebtoken');
+const db = require('../config/db.config');
 
-const verifyToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader?.split(' ')[1];
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
 
-  if (!token) return res.status(401).json({ message: 'Token requerido' });
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ message: 'Token requerido' });
+  }
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ message: 'Token inválido o expirado' });
-    req.user = user;
+  const token = authHeader.split(' ')[1]?.trim();
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    req.token = token;
+
+    const { data: tokenRecord, error } = await db
+      .from('access_tokens')
+      .select('*')
+      .eq('token', token)
+      // .gt('expires_at', new Date())
+      .maybeSingle(); // ✅
+
+    console.log(`Verificando token: "${token}"`);
+    console.log('token record:', tokenRecord);
+    console.log(`Token verificado: ${tokenRecord ? 'sí' : 'no'}`);
+
+    if (!tokenRecord) {
+      return res.status(403).json({ message: 'Token inválido o expirado (revocado)' });
+    }
+
     next();
-  });
+  } catch (err) {
+    console.error('Error al verificar token:', err.message);
+    return res.status(403).json({ message: 'Token inválido' });
+  }
 };
+
 
 module.exports = verifyToken;

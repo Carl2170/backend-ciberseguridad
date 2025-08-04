@@ -8,21 +8,20 @@ const register = async (req, res) => {
   const { email, password, full_name } = req.body;
 
   try {
-    // Verifica si el usuario ya existe
-    const { data: existing, error: errExisting } = await db
+    const { data: existingUser, error: errExisting } = await db
       .from('users')
       .select('*')
-      .eq('email', email);
+      .eq('email', email)
+      .maybeSingle();
 
     if (errExisting) throw errExisting;
-
-    if (existing.length > 0) return res.status(400).json({ message: 'Email ya registrado' });
+    if (existingUser) return res.status(400).json({ message: 'Email ya registrado' });
 
     const password_hash = await hashPassword(password);
 
-    const { data: [user], error: errInsert } = await db
+    const { data: user, error: errInsert } = await db
       .from('users')
-      .insert([{ email, password_hash, full_name }])
+      .insert({ email, password_hash, full_name })
       .select('id, email, full_name')
       .single();
 
@@ -39,11 +38,11 @@ const login = async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    const { data: [user], error: errUser } = await db
+    const { data: user, error: errUser } = await db
       .from('users')
       .select('*')
       .eq('email', email)
-      .single();
+      .maybeSingle();
 
     if (errUser || !user) return res.status(401).json({ message: 'Credenciales inválidas' });
 
@@ -51,18 +50,26 @@ const login = async (req, res) => {
     if (!valid) return res.status(401).json({ message: 'Credenciales inválidas' });
 
     const accessToken = generateAccessToken(user);
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // ejemplo: 15 minutos
+
+    await db.from('access_tokens').insert([
+      {
+        token: accessToken,
+        user_id: user.id,
+        expires_at: expiresAt
+      }
+    ]);
     const refreshToken = generateRefreshToken();
 
-    // Guarda el refresh token
     const { error: errToken } = await db
       .from('refresh_tokens')
-      .insert([{
+      .insert({
         user_id: user.id,
         token: refreshToken,
         user_agent: req.headers['user-agent'] || 'desconocido',
         ip_address: req.ip,
-        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 días en ms
-      }]);
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      });
 
     if (errToken) throw errToken;
 
@@ -78,29 +85,27 @@ const refreshAccessToken = async (req, res) => {
   if (!refreshToken) return res.status(400).json({ message: 'Token requerido' });
 
   try {
-    const { data: [storedToken], error: errToken } = await db
+    const { data: storedToken, error: errToken } = await db
       .from('refresh_tokens')
       .select('*')
       .eq('token', refreshToken)
       .eq('used', false)
       .gt('expires_at', new Date())
-      .single();
+      .maybeSingle();
 
     if (errToken || !storedToken) return res.status(403).json({ message: 'Token inválido o expirado' });
 
-    // Busca usuario
-    const { data: [user], error: errUser } = await db
+    const { data: user, error: errUser } = await db
       .from('users')
       .select('*')
       .eq('id', storedToken.user_id)
-      .single();
+      .maybeSingle();
 
     if (errUser || !user) return res.status(404).json({ message: 'Usuario no encontrado' });
 
     const newAccessToken = generateAccessToken(user);
 
     res.json({ accessToken: newAccessToken });
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Error al refrescar token' });
@@ -109,32 +114,47 @@ const refreshAccessToken = async (req, res) => {
 
 const logout = async (req, res) => {
   const { refreshToken } = req.body;
-  if (!refreshToken) return res.status(400).json({ message: 'Token requerido' });
+  const accessToken = req.token; // viene del middleware
+
+  if (!refreshToken) {
+    return res.status(400).json({ message: 'Token requerido' });
+  }
 
   try {
-    const { error } = await db
+    // Marcar refreshToken como usado
+    const { data: updated, error } = await db
       .from('refresh_tokens')
       .update({ used: true })
-      .eq('token', refreshToken);
+      .eq('token', refreshToken)
+      .select();
 
     if (error) throw error;
 
+    // Eliminar accessToken actual
+    if (accessToken) {
+      await db
+        .from('access_tokens')
+        .delete()
+        .eq('token', accessToken);
+    }
+
     res.json({ message: 'Sesión cerrada correctamente' });
   } catch (err) {
-    console.error(err);
+    console.error('Error en logout:', err);
     res.status(500).json({ message: 'Error al cerrar sesión' });
   }
 };
+
 
 const forgotPassword = async (req, res) => {
   const { email } = req.body;
 
   try {
-    const { data: [user], error: errUser } = await db
+    const { data: user, error: errUser } = await db
       .from('users')
       .select('*')
       .eq('email', email)
-      .single();
+      .maybeSingle();
 
     if (errUser || !user) return res.status(404).json({ msg: 'Usuario no encontrado' });
 
@@ -143,11 +163,11 @@ const forgotPassword = async (req, res) => {
 
     const { error: errInsert } = await db
       .from('password_reset_tokens')
-      .insert([{ user_id: user.id, token, expires_at: expiresAt }]);
+      .insert({ user_id: user.id, token, expires_at: expiresAt });
 
     if (errInsert) throw errInsert;
 
-    // Aquí envía correo con el token o link con token
+    // Aquí deberías enviar el correo
     res.json({ msg: 'Token generado', token });
   } catch (err) {
     console.error(err);
@@ -159,31 +179,31 @@ const resetPassword = async (req, res) => {
   const { token, newPassword } = req.body;
 
   try {
-    const { data: [resetToken], error: errToken } = await db
+    const { data: resetToken, error: errToken } = await db
       .from('password_reset_tokens')
       .select('*')
       .eq('token', token)
       .eq('used', false)
       .gt('expires_at', new Date())
-      .single();
+      .maybeSingle();
 
     if (errToken || !resetToken) return res.status(400).json({ msg: 'Token inválido o expirado' });
 
     const hashed = await bcrypt.hash(newPassword, 10);
 
-    const { error: errUpdateUser } = await db
+    const { error: errUpdate } = await db
       .from('users')
       .update({ password_hash: hashed })
       .eq('id', resetToken.user_id);
 
-    if (errUpdateUser) throw errUpdateUser;
+    if (errUpdate) throw errUpdate;
 
-    const { error: errUsed } = await db
+    const { error: errMarkUsed } = await db
       .from('password_reset_tokens')
       .update({ used: true })
       .eq('token', token);
 
-    if (errUsed) throw errUsed;
+    if (errMarkUsed) throw errMarkUsed;
 
     res.json({ msg: 'Contraseña actualizada correctamente' });
   } catch (err) {
@@ -192,11 +212,11 @@ const resetPassword = async (req, res) => {
   }
 };
 
-module.exports = { 
-  register, 
-  login, 
-  refreshAccessToken, 
-  logout, 
-  forgotPassword, 
-  resetPassword 
+module.exports = {
+  register,
+  login,
+  refreshAccessToken,
+  logout,
+  forgotPassword,
+  resetPassword
 };
